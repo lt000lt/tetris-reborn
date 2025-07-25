@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Emoji Tetris</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+    body{margin:0;font-family:sans-serif;background:#111;color:#eee;display:flex;height:100vh}
+    #left,#right{flex:1 1 0;min-width:200px;padding:10px}
+    #center{flex:0 0 320px;display:flex;flex-direction:column;align-items:center}
+    canvas{border:2px solid #fff;background:#000}
+    #next,#hold{border:1px solid #666;margin:10px 0;background:#000}
+    #controls button{margin:3px;padding:8px;font-size:18px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:4px;text-align:center;border-bottom:1px solid #444}
+    h2{margin:6px 0;font-size:16px}
+    #pause{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+           background:rgba(0,0,0,.8);padding:20px;border-radius:10px;display:none}
+</style>
+</head>
+<body>
+<div id="left">
+    <h2>Leaderboard</h2>
+    <table id="leaderTable"><thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div id="center">
+    <h1>Emoji Tetris</h1>
+    <canvas id="board" width="300" height="600"></canvas>
+    <div>
+        <canvas id="next" width="120" height="120"></canvas>
+        <canvas id="hold" width="120" height="120"></canvas>
+    </div>
+    <div id="controls">
+        <button id="btnLeft">←</button>
+        <button id="btnRot">↻</button>
+        <button id="btnRight">→</button><br>
+        <button id="btnDown">↓</button>
+        <button id="btnDrop">Drop</button>
+        <button id="btnHold">Hold</button>
+    </div>
+</div>
+
+<div id="right">
+    <h2>Score</h2>
+    <div>Score: <span id="score">0</span></div>
+    <div>Lines: <span id="lines">0</span></div>
+    <div>Level: <span id="level">1</span></div>
+    <button id="restartBtn">Restart</button>
+</div>
+
+<div id="pause">
+    <h2>Game Over</h2>
+    Name: <input id="nameInput" maxlength="10" value="Player"/>
+    <button id="saveBtn">Save score</button>
+    <button id="playAgainBtn">Play again</button>
+</div>
+
+<script>
+/* ---------- CONFIG ---------- */
+const COLS = 10, ROWS = 20, SQ = 30; // square size in px
+const EMOJIS = [' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' '];
+const SHAPES = [
+  [[0,0,0,0],[0,1,1,0],[0,1,1,0],[0,0,0,0]], // O
+  [[0,0,0,0],[0,1,1,1],[0,0,1,0],[0,0,0,0]], // T
+  [[0,0,0,0],[0,1,1,0],[0,1,0,0],[0,1,0,0]], // L
+  [[0,0,0,0],[0,1,1,0],[0,0,1,1],[0,0,0,0]], // S
+  [[0,0,0,0],[0,0,1,1],[0,1,1,0],[0,0,0,0]], // Z
+  [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]], // I
+  [[0,0,0,0],[1,1,1,0],[1,0,0,0],[0,0,0,0]]  // J
+];
+/* ---------- CANVAS SETUP ---------- */
+const cv = document.getElementById('board');
+const ctx = cv.getContext('2d');
+const nextCv = document.getElementById('next');
+const nextCtx = nextCv.getContext('2d');
+const holdCv = document.getElementById('hold');
+const holdCtx = holdCv.getContext('2d');
+ctx.scale(SQ,SQ);
+nextCtx.scale(SQ,SQ);
+holdCtx.scale(SQ,SQ);
+
+/* ---------- GAME STATE ---------- */
+let board = createMatrix(COLS,ROWS);
+let piece = null, nextPiece = null, holdPiece = null;
+let score = 0, lines = 0, level = 1;
+let dropCounter = 0, lastTime = 0;
+let gameOver = false, holdUsed = false;
+
+/* ---------- PIECES ---------- */
+function createMatrix(w,h){return Array.from({length:h},()=>Array(w).fill(0));}
+function randEmoji(){return EMOJIS[Math.floor(Math.random()*EMOJIS.length)];}
+function newPiece(){
+    const type = SHAPES[Math.floor(Math.random()*SHAPES.length)];
+    const emoji = randEmoji();
+    return {type,emoji,x:3,y:-2};
+}
+/* ---------- DRAW ---------- */
+function drawMatrix(m,offsetX=0,offsetY=0,emoji=' '){
+    m.forEach((row,y)=>{
+        row.forEach((val,x)=>{
+            if(val){
+                ctx.fillText(emoji,offsetX+x+0.15,offsetY+y+0.85);
+            }
+        });
+    });
+}
+function drawBoard(){
+    ctx.clearRect(0,0,COLS,ROWS);
+    ctx.font='1px serif';
+    drawMatrix(board,0,0,' ');
+    if(piece){
+        drawMatrix(piece.type,piece.x,piece.y,piece.emoji);
+    }
+}
+function drawPreview(ctx,p){
+    ctx.clearRect(0,0,4,4);
+    if(!p)return;
+    ctx.font='1px serif';
+    drawMatrix(p.type,0,0,p.emoji);
+}
+/* ---------- TETRIS LOGIC ---------- */
+function collide(b,p){
+    for(let y=0;y<4;y++){
+        for(let x=0;x<4;x++){
+            if(p.type[y][x] && (b[y+p.y] && b[y+p.y][x+p.x])!==0){
+                return true;
+            }
+        }
+    }
+    return false;
+}
+function merge(b,p){
+    for(let y=0;y<4;y++){
+        for(let x=0;x<4;x++){
+            if(p.type[y][x]) b[y+p.y][x+p.x]=p.emoji;
+        }
+    }
+}
+function rotate(p,dir){
+    // transpose + reverse = 90 deg rotation
+    const N=4;
+    let rotated = createMatrix(N,N);
+    for(let y=0;y<N;y++){
+        for(let x=0;x<N;x++){
+            rotated[y][x]=p.type[N-x-1][y];
+        }
+    }
+    const old = p.type;
+    p.type = rotated;
+    if(collide(board,p)) p.type = old;
+}
+function lineClear(){
+    outer: for(let y=ROWS-1;y>=0;y--){
+        for(let x=0;x<COLS;x++){
+            if(board[y][x]===0) continue outer;
+        }
+        const row = board.splice(y,1)[0].fill(0);
+        board.unshift(row);
+        y++;
+        lines++;
+        score+=100*level;
+        if(lines%10===0) level++;
+    }
+}
+function playerMove(dir){
+    if(gameOver)return;
+    piece.x+=dir;
+    if(collide(board,piece)) piece.x-=dir;
+}
+function playerRotate(){if(!gameOver) rotate(piece,1);}
+function playerDrop(){
+    if(gameOver)return;
+    piece.y++;
+    if(collide(board,piece)){
+        piece.y--;
+        merge(board,piece);
+        lineClear();
+        piece = nextPiece;
+        nextPiece = newPiece();
+        holdUsed=false;
+        if(collide(board,piece)) gameOver=true;
+    }
+    dropCounter=0;
+}
+function playerHardDrop(){
+    while(!collide(board,{...piece,y:piece.y+1})){
+        piece.y++;
+        score+=2;
+    }
+    playerDrop();
+}
+function playerHold(){
+    if(holdUsed||gameOver)return;
+    holdUsed=true;
+    if(holdPiece){
+        [piece,holdPiece]=[holdPiece,piece];
+        piece.x=3;piece.y=-2;
+    }else{
+        holdPiece = {...piece};
+        piece = nextPiece;
+        nextPiece = newPiece();
+    }
+    holdPiece.x=0;holdPiece.y=0;
+}
+/* ---------- GAME LOOP ---------- */
+function update(time=0){
+    if(gameOver){showGameOver();return;}
+    const delta = time-lastTime;
+    lastTime=time;
+    dropCounter+=delta;
+    if(dropCounter>1000-(level-1)*50){
+        playerDrop();
+    }
+    drawBoard();
+    drawPreview(nextCtx,nextPiece);
+    drawPreview(holdCtx,holdPiece);
+    document.getElementById('score').textContent=score;
+    document.getElementById('lines').textContent=lines;
+    document.getElementById('level').textContent=level;
+    requestAnimationFrame(update);
+}
+/* ---------- LEADERBOARD ---------- */
+function loadBoard(){
+    return JSON.parse(localStorage.getItem('emojiTetrisLB')||"[]");
+}
+function saveBoard(b){
+    localStorage.setItem('emojiTetrisLB',JSON.stringify(b));
+}
+function renderLeaderboard(){
+    const tbody=document.querySelector('#leaderTable tbody');
+    tbody.innerHTML='';
+    loadBoard().slice(0,10).forEach((e,i)=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${i+1}</td><td>${e.name}</td><td>${e.score}</td>`;
+        tbody.appendChild(tr);
+    });
+}
+function addScore(name,sc){
+    const lb=loadBoard();
+    lb.push({name,score:sc});
+    lb.sort((a,b)=>b.score-a.score);
+    saveBoard(lb);
+    renderLeaderboard();
+}
+function showGameOver(){
+    document.getElementById('pause').style.display='block';
+}
+function restart(){
+    board=createMatrix(COLS,ROWS);
+    piece=newPiece();
+    nextPiece=newPiece();
+    holdPiece=null;
+    score=lines=0;level=1;
+    dropCounter=lastTime=0;
+    gameOver=false;
+    holdUsed=false;
+    document.getElementById('pause').style.display='none';
+    update();
+}
+/* ---------- CONTROLS ---------- */
+document.addEventListener('keydown',e=>{
+    if(gameOver)return;
+    switch(e.code){
+        case 'ArrowLeft':playerMove(-1);break;
+        case 'ArrowRight':playerMove(1);break;
+        case 'ArrowDown':playerDrop();score++;break;
+        case 'ArrowUp':case 'KeyX':playerRotate();break;
+        case 'Space':e.preventDefault();playerHardDrop();break;
+        case 'KeyC':case 'ShiftLeft':playerHold();break;
+    }
+});
+document.getElementById('btnLeft').onclick=()=>playerMove(-1);
+document.getElementById('btnRight').onclick=()=>playerMove(1);
+document.getElementById('btnRot').onclick=playerRotate;
+document.getElementById('btnDown').onclick=()=>{playerDrop();score++};
+document.getElementById('btnDrop').onclick=playerHardDrop;
+document.getElementById('btnHold').onclick=playerHold;
+document.getElementById('restartBtn').onclick=restart;
+document.getElementById('saveBtn').onclick=()=>{
+    const n=document.getElementById('nameInput').value||'Anonymous';
+    addScore(n,score);
+    document.getElementById('pause').style.display='none';
+};
+document.getElementById('playAgainBtn').onclick=restart;
+
+/* ---------- INIT ---------- */
+renderLeaderboard();
+restart();
+</script>
+</body>
+</html>
